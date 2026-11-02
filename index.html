@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verified App Reviews</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.2/ethers.umd.min.js"></script>
+<style>
+  :root {
+    --paper: #f2f5f1;
+    --ink: #15221c;
+    --muted: #5d6b63;
+    --line: #cfd8d1;
+    --accent: #0c7a56;
+    --accent-ink: #ffffff;
+    --bad: #b3261e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 16px/1.55 "IBM Plex Sans", system-ui, sans-serif;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 2rem; margin: 0 0 4px; letter-spacing: -0.01em; }
+  h2 { font-size: 1.15rem; margin: 0 0 12px; }
+  p.sub { color: var(--muted); margin: 0 0 24px; max-width: 60ch; }
+  section { border-top: 1px solid var(--line); padding: 20px 0; }
+  label { display: block; font-size: .9rem; color: var(--muted); margin-bottom: 4px; }
+  input, select, textarea {
+    width: 100%; padding: 9px 10px; border: 1px solid var(--line);
+    border-radius: 6px; background: #fff; font: inherit; color: var(--ink);
+  }
+  textarea { min-height: 70px; resize: vertical; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+  .row > div { flex: 1 1 180px; }
+  button {
+    padding: 9px 16px; border: 0; border-radius: 6px; cursor: pointer;
+    background: var(--accent); color: var(--accent-ink); font: inherit; font-weight: 600;
+  }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  :focus-visible { outline: 3px solid #f0b429; outline-offset: 2px; }
+  #status { min-height: 1.4em; margin: 12px 0 0; font-size: .95rem; }
+  #status.error { color: var(--bad); }
+  .app { padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .app-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .app-name { font-weight: 600; font-size: 1.05rem; }
+  .avg { font-size: 1.6rem; font-weight: 700; color: var(--accent); }
+  .avg small { font-size: .85rem; color: var(--muted); font-weight: 400; }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; margin: 6px 0 10px; }
+  .bar span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+  .review { padding: 8px 0 0; font-size: .95rem; }
+  .review .who { color: var(--muted); font-size: .85rem; }
+  .hidden { display: none; }
+  code { background: #e4eae5; padding: 1px 5px; border-radius: 4px; font-size: .88em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Verified App Reviews</h1>
+  <p class="sub">Every rating comes from a wallet the owner has verified, and each wallet can rate an app only once, so fake reviews can’t pile up.</p>
+
+  <section>
+    <h2>1. Connect</h2>
+    <div class="row">
+      <div>
+        <label for="addr">Contract address</label>
+        <input id="addr" placeholder="0x… (from Remix after deploying)">
+      </div>
+      <button id="connectBtn">Connect wallet</button>
+    </div>
+    <p id="account" class="sub" style="margin:10px 0 0"></p>
+    <p id="status" role="status"></p>
+  </section>
+
+  <section id="adminBox" class="hidden">
+    <h2>Owner tools</h2>
+    <div class="row">
+      <div>
+        <label for="newApp">New app name</label>
+        <input id="newApp" placeholder="e.g. Notes Lite">
+      </div>
+      <button id="addAppBtn">Add app</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <div>
+        <label for="verifyAddr">Wallet to verify</label>
+        <input id="verifyAddr" placeholder="0x…">
+      </div>
+      <button id="verifyBtn" class="ghost">Verify wallet</button>
+    </div>
+  </section>
+
+  <section id="rateBox" class="hidden">
+    <h2>Rate an app</h2>
+    <div class="row">
+      <div>
+        <label for="appSelect">App</label>
+        <select id="appSelect"></select>
+      </div>
+      <div>
+        <label for="stars">Stars</label>
+        <select id="stars">
+          <option>5</option><option>4</option><option>3</option><option>2</option><option>1</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-top:12px">
+      <label for="comment">Comment</label>
+      <textarea id="comment" maxlength="280" placeholder="What was it like to use?"></textarea>
+    </div>
+    <p style="margin:12px 0 0"><button id="rateBtn">Post rating</button></p>
+  </section>
+
+  <section>
+    <h2>Apps</h2>
+    <div id="appList"><p class="sub">Connect to a deployed contract to see apps.</p></div>
+  </section>
+</main>
+
+<script>
+const ABI = [
+  "function owner() view returns (address)",
+  "function appCount() view returns (uint256)",
+  "function apps(uint256) view returns (string name, uint256 totalStars, uint256 ratingCount)",
+  "function verifiedUsers(address) view returns (bool)",
+  "function hasRated(uint256, address) view returns (bool)",
+  "function addApp(string name)",
+  "function verifyUser(address user)",
+  "function rateApp(uint256 appId, uint8 stars, string comment)",
+  "function getAverage(uint256 appId) view returns (uint256)",
+  "function getReviews(uint256 appId) view returns (tuple(address reviewer, uint8 stars, string comment, uint256 timestamp)[])"
+];
+
+let provider, signer, contract, account;
+const $ = (id) => document.getElementById(id);
+
+function say(msg, isError = false) {
+  $("status").textContent = msg;
+  $("status").className = isError ? "error" : "";
+}
+
+function reason(e) {
+  return e.reason || e.shortMessage || e.message || "Something went wrong";
+}
+
+function short(a) { return a.slice(0, 6) + "…" + a.slice(-4); }
+
+async function connect() {
+  try {
+    if (!window.ethereum) return say("MetaMask not found. Install it and reload the page.", true);
+    const address = $("addr").value.trim();
+    if (!ethers.isAddress(address)) return say("Enter a valid contract address first.", true);
+
+    provider = new ethers.BrowserProvider(window.ethereum);
+    await provider.send("eth_requestAccounts", []);
+    signer = await provider.getSigner();
+    account = await signer.getAddress();
+    contract = new ethers.Contract(address, ABI, signer);
+
+    const [owner, verified] = await Promise.all([contract.owner(), contract.verifiedUsers(account)]);
+    const isOwner = owner.toLowerCase() === account.toLowerCase();
+
+    $("account").textContent =
+      "Connected as " + short(account) + (isOwner ? " (owner)" : "") +
+      (verified ? ", verified" : ", not verified yet");
+    $("adminBox").classList.toggle("hidden", !isOwner);
+    $("rateBox").classList.toggle("hidden", !verified);
+    say("Connected.");
+    await loadApps();
+  } catch (e) { say(reason(e), true); }
+}
+
+async function loadApps() {
+  const count = Number(await contract.appCount());
+  const list = $("appList");
+  const select = $("appSelect");
+  list.innerHTML = "";
+  select.innerHTML = "";
+
+  if (count === 0) {
+    list.innerHTML = '<p class="sub">No apps yet. The owner can add the first one.</p>';
+    return;
+  }
+
+  for (let i = 0; i < count; i++) {
+    const app = await contract.apps(i);
+    const avg = Number(await contract.getAverage(i)) / 100;
+    const reviews = await contract.getReviews(i);
+
+    const opt = document.createElement("option");
+    opt.value = i; opt.textContent = app.name;
+    select.appendChild(opt);
+
+    const div = document.createElement("div");
+    div.className = "app";
+    const head = document.createElement("div");
+    head.className = "app-head";
+    const name = document.createElement("span");
+    name.className = "app-name"; name.textContent = app.name;
+    const score = document.createElement("span");
+    score.className = "avg";
+    score.innerHTML = avg.toFixed(1) + ' <small>/ 5 from ' + app.ratingCount + ' review' +
+      (Number(app.ratingCount) === 1 ? "" : "s") + "</small>";
+    head.append(name, score);
+
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    bar.innerHTML = '<span style="width:' + (avg / 5) * 100 + '%"></span>';
+    div.append(head, bar);
+
+    reviews.forEach((r) => {
+      const rv = document.createElement("div");
+      rv.className = "review";
+      const who = document.createElement("div");
+      who.className = "who";
+      who.textContent = r.stars + " stars by " + short(r.reviewer) + " on " +
+        new Date(Number(r.timestamp) * 1000).toLocaleDateString();
+      const text = document.createElement("div");
+      text.textContent = r.comment;
+      rv.append(who, text);
+      div.appendChild(rv);
+    });
+    list.appendChild(div);
+  }
+}
+
+async function send(txPromise, doneMsg) {
+  try {
+    say("Waiting for wallet confirmation…");
+    const tx = await txPromise;
+    say("Transaction sent. Waiting for it to be mined…");
+    await tx.wait();
+    say(doneMsg);
+    await loadApps();
+  } catch (e) { say(reason(e), true); }
+}
+
+$("connectBtn").onclick = connect;
+
+$("addAppBtn").onclick = () => {
+  const name = $("newApp").value.trim();
+  if (!name) return say("Enter an app name.", true);
+  send(contract.addApp(name), "App added.");
+  $("newApp").value = "";
+};
+
+$("verifyBtn").onclick = () => {
+  const a = $("verifyAddr").value.trim();
+  if (!ethers.isAddress(a)) return say("Enter a valid wallet address.", true);
+  send(contract.verifyUser(a), "Wallet verified.");
+  $("verifyAddr").value = "";
+};
+
+$("rateBtn").onclick = async () => {
+  const id = $("appSelect").value;
+  if (id === "") return say("Pick an app first.", true);
+  if (await contract.hasRated(id, account)) return say("You already rated this app.", true);
+  send(contract.rateApp(id, Number($("stars").value), $("comment").value.trim()), "Rating posted.");
+  $("comment").value = "";
+};
+</script>
+</body>
+</html>
