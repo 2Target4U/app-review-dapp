@@ -64,7 +64,8 @@ A simple decentralized application (DApp) where Android app ratings are stored o
 
 ## Screenshots
 
-![App review UI](screenshots/ui.png)
+![App review UI](Screenshots/ui&rating.png)
+![Duplicate rating blocked](Screenshots/already-rated-app.png)
 
 ## How it works
 
